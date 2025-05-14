@@ -91,21 +91,20 @@ Matrix4x4 MakePerspectiveFovMatrix(float fovY, float aspect, float nearZ, float 
 	Matrix4x4 m{};
 	float yScale = 1.0f / tanf(fovY / 2.0f);
 	float xScale = yScale / aspect;
-	float range = farZ - nearZ;
 
 	m.m[0][0] = xScale;
 	m.m[1][1] = yScale;
-	m.m[2][2] = farZ / range;
-	m.m[2][3] = 1.0f;
-	m.m[3][2] = -nearZ * farZ / range;
+	m.m[2][2] = -(farZ + nearZ) / (farZ - nearZ);
+	m.m[2][3] = -1.0f;
+	m.m[3][2] = -(2 * farZ * nearZ) / (farZ - nearZ);
 
 	return m;
 }
 Vector3 TransformWithW(const Vector3& v, const Matrix4x4& m) {
-	float x = v.x * m.m[0][0] + v.y * m.m[0][1] + v.z * m.m[0][2] + m.m[0][3];
-	float y = v.x * m.m[1][0] + v.y * m.m[1][1] + v.z * m.m[1][2] + m.m[1][3];
-	float z = v.x * m.m[2][0] + v.y * m.m[2][1] + v.z * m.m[2][2] + m.m[2][3];
-	float w = v.x * m.m[3][0] + v.y * m.m[3][1] + v.z * m.m[3][2] + m.m[3][3];
+	float x = v.x * m.m[0][0] + v.y * m.m[1][0] + v.z * m.m[2][0] + m.m[3][0];
+	float y = v.x * m.m[0][1] + v.y * m.m[1][1] + v.z * m.m[2][1] + m.m[3][1];
+	float z = v.x * m.m[0][2] + v.y * m.m[1][2] + v.z * m.m[2][2] + m.m[3][2];
+	float w = v.x * m.m[0][3] + v.y * m.m[1][3] + v.z * m.m[2][3] + m.m[3][3];
 
 	if (w != 0.0f) {
 		x /= w;
@@ -115,6 +114,7 @@ Vector3 TransformWithW(const Vector3& v, const Matrix4x4& m) {
 
 	return { x, y, z };
 }
+
 Vector3 Transform(const Vector3& v, const Matrix4x4& m) {
 	Vector3 result;
 	result.x = v.x * m.m[0][0] + v.y * m.m[0][1] + v.z * m.m[0][2] + m.m[0][3];
@@ -176,37 +176,54 @@ void DrawGrid(const Matrix4x4& viewProjectionMatrix, const Matrix4x4& viewportMa
 	const uint32_t kSubdivision = 10;
 	const float kGridEvery = (kGridHalfWidth * 2.0f) / float(kSubdivision);
 
-	// 奥から手前への線（Z方向）
 	for (uint32_t xIndex = 0; xIndex <= kSubdivision; ++xIndex) {
 		float x = -kGridHalfWidth + kGridEvery * xIndex;
 		Vector3 worldStart = { x, 0.0f, -kGridHalfWidth };
 		Vector3 worldEnd = { x, 0.0f,  kGridHalfWidth };
 
+		// NDCに変換
 		Vector3 ndcStart = TransformWithW(worldStart, viewProjectionMatrix);
 		Vector3 ndcEnd = TransformWithW(worldEnd, viewProjectionMatrix);
 
-		Vector3 screenStart = Transform(ndcStart, viewportMatrix);
-		Vector3 screenEnd = Transform(ndcEnd, viewportMatrix);
+		// Vector4化してViewport変換に渡す
+		Vector4 ndcStart4 = { ndcStart.x, ndcStart.y, ndcStart.z, 1.0f };
+		Vector4 ndcEnd4 = { ndcEnd.x, ndcEnd.y, ndcEnd.z, 1.0f };
 
+		// NDC → Screen変換（TransformWithWでもOK）
+		Vector3 screenStart = TransformWithW({ ndcStart4.x, ndcStart4.y, ndcStart4.z }, viewportMatrix);
+		Vector3 screenEnd = TransformWithW({ ndcEnd4.x, ndcEnd4.y, ndcEnd4.z }, viewportMatrix);
+
+		// 線の色
 		uint32_t color = (abs(x) < 0.001f) ? 0x000000FF : 0xAAAAAAFF;
-		Novice::DrawLine(int(screenStart.x), int(screenStart.y), int(screenEnd.x), int(screenEnd.y), color);
+		Novice::DrawLine(int(screenStart.x + 0.5f), int(screenStart.y + 0.5f),
+			int(screenEnd.x + 0.5f), int(screenEnd.y + 0.5f), color);
+
+		ImGui::Text("ndcStart: (%.2f, %.2f, %.2f)", ndcStart.x, ndcStart.y, ndcStart.z);
+
 	}
 
-	// 左から右への線（X方向）
+
 	for (uint32_t zIndex = 0; zIndex <= kSubdivision; ++zIndex) {
 		float z = -kGridHalfWidth + kGridEvery * zIndex;
 		Vector3 worldStart = { -kGridHalfWidth, 0.0f, z };
 		Vector3 worldEnd = { kGridHalfWidth, 0.0f, z };
 
+		// ビュープロジェクション変換 → NDC
 		Vector3 ndcStart = TransformWithW(worldStart, viewProjectionMatrix);
 		Vector3 ndcEnd = TransformWithW(worldEnd, viewProjectionMatrix);
 
-		Vector3 screenStart = Transform(ndcStart, viewportMatrix);
-		Vector3 screenEnd = Transform(ndcEnd, viewportMatrix);
+		// Vector4化して ViewportMatrix に通す
+		Vector4 ndcStart4 = { ndcStart.x, ndcStart.y, ndcStart.z, 1.0f };
+		Vector4 ndcEnd4 = { ndcEnd.x, ndcEnd.y, ndcEnd.z, 1.0f };
+
+		Vector3 screenStart = TransformWithW({ ndcStart4.x, ndcStart4.y, ndcStart4.z }, viewportMatrix);
+		Vector3 screenEnd = TransformWithW({ ndcEnd4.x, ndcEnd4.y, ndcEnd4.z }, viewportMatrix);
 
 		uint32_t color = (abs(z) < 0.001f) ? 0x000000FF : 0xAAAAAAFF;
-		Novice::DrawLine(int(screenStart.x), int(screenStart.y), int(screenEnd.x), int(screenEnd.y), color);
+		Novice::DrawLine(int(screenStart.x + 0.5f), int(screenStart.y + 0.5f),
+			int(screenEnd.x + 0.5f), int(screenEnd.y + 0.5f), color);
 	}
+
 }
 Matrix4x4 MakeRotationMatrix(const Vector3& rotate) {
 	float cosX = cosf(rotate.x), sinX = sinf(rotate.x);
@@ -289,7 +306,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 		ImGui::DragFloat3("CameraUp", &cameraUp.x, 0.01f);
 		ImGui::End();
 
-		DrawGrid(Multiply(  viewMatrix, projectionMatrix ), viewportMatrix);
+		DrawGrid(Multiply(projectionMatrix, viewMatrix), viewportMatrix);
 
 		///
 		/// ↑描画処理ここまで
